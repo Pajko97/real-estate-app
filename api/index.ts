@@ -1,3 +1,4 @@
+import { AppDataSource } from "./src/db/data-source";
 // Import required modules
 const express = require('express');
 const session = require('express-session');
@@ -5,14 +6,14 @@ const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const bcrypt = require('bcrypt');
-const { PrismaClient } = require('@prisma/client');
 const AuthController = require('./controllers/AuthController')
 // Create an instance of the Express app
 const app = express();
 
-// Initialize Prisma client
-const prisma = new PrismaClient();
+// Initialize Database
+AppDataSource.initialize().then(async () => {
 
+}).catch(error => console.log(error))
 // Middleware for parsing JSON
 app.use(express.json());
 
@@ -34,20 +35,14 @@ passport.serializeUser((user: PassportUserType, done: Function) => {
   done(null, user.id);
 });
 
-passport.deserializeUser(async (id: String, done: Function) => {
-  try {
-    const user = await prisma.user.findUnique({ where: { id } });
-    done(null, user);
-  } catch (error) {
-    done(error);
-  }
-});
 
-// Define local strategy for username/password authentication
+interface CustomResponseType {
+  message: string;
+}
 passport.use(
-  new LocalStrategy(async (username: String, password: String, done: Function) => {
+  new LocalStrategy(async (username, password, done) => {
     try {
-      const user = await prisma.user.findUnique({ where: { username } });
+      const user = await User.findOne({ where: { username } });
 
       if (!user) {
         return done(null, false, { message: 'Incorrect username.' });
@@ -74,22 +69,18 @@ passport.use(
       clientSecret: 'your-google-client-secret',
       callbackURL: 'your-google-callback-url',
     },
-    async (accessToken: String, refreshToken: String, profile: GoogleProfile, done: Function) => {
+    async (accessToken, refreshToken, profile, done) => {
       try {
         // Check if user exists in the database
-        let user = await prisma.user.findUnique({
-          where: { googleId: profile.id },
-        });
+        let user = await User.findOne({ where: { googleId: profile.id } });
 
         if (!user) {
           // Create a new user if not found
-          user = await prisma.user.create({
-            data: {
-              googleId: profile.id,
-              email: profile.emails[0].value,
-              // Add any additional fields from the Google profile
-            },
-          });
+          user = await User.create({
+            googleId: profile.id,
+            email: profile.emails[0].value,
+            // Add any additional fields from the Google profile
+          }).save();
         }
 
         return done(null, user);
@@ -99,10 +90,16 @@ passport.use(
     }
   )
 );
-interface CustomResponseType {
-  message: string;
-}
 
+// Deserialize user
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findOne(id);
+    done(null, user);
+  } catch (error) {
+    done(error);
+  }
+});
 // Define routes for login and logout
 app.post('/login', passport.authenticate('local'), (req: Request, res: any ) => {
   res.json({ message: 'Login successful.' });
